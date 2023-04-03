@@ -1,3 +1,7 @@
+# Project specific items
+charles-samples/
+RE.md
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
