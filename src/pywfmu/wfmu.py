@@ -14,6 +14,8 @@ CAMPAIGN_JSON_URL = "https://pledge.wfmu.org/static/progress/campaign.json"
 PLAYLIST_URL_BASE = "https://www.wfmu.org/playlists/shows/"
 COMMENTS_XML_URL = "https://wfmu.org/current_playlist_xml.php?m=comments&c=1"
 CURRENT_SHOW_XML_URL = "https://wfmu.org/currentliveshows.php?xml=1&c=1"
+SCHEDULE_TODAY_XML_URL = "https://wfmu.org/playingtoday.php?xml=1&c=1"
+SONGS_XML_URL = "https://wfmu.org/current_playlist_xml.php?m=songs"
 
 
 class WFMUClient(object):
@@ -25,43 +27,50 @@ class WFMUClient(object):
     @property
     def artist(self):
         self._update_status()
-        return self.song["artist"]
+        return self._song["artist"]
 
     @property
     def title(self):
         self._update_status()
-        return self.song["title"]
+        return self._song["title"]
 
     @property
     def album(self):
         self._update_status()
-        return self.song["album"]
+        return self._song["album"]
 
     @property
     def playlist_id(self):
         self._update_status()
-        return self.show["playlist_id"]
+        return self._show["playlist_id"]
 
     @property
-    def example(self):
+    def show(self):
         self._update_status()
-        return self._example
+        return self._show
+
+    @property
+    def song(self):
+        self._update_status()
+        return self._song
 
     def _update_status(self) -> None:
         r = requests.get(url=CURRENT_SHOW_JSON_URL)
         status = r.json()
 
-        self.show = {
+        self._show = {
             "name": status["program"]["title_html"],
             "playlist_id": status["episode"]["id"],
             "playlist_link": status["episode"]["url"],
             "show_id": status["program"]["id"],
+            # consider using SCHEDULE_TODAY_XML_URL for start+end since
+            # CURRENT_SHOW_JSON_URL returns unpredictable text-based times
             "start": status["program"]["start_time_mmss"],
             "end": status["program"]["end_time_mmss"],
             "live": status["episode"]["live_indicator_flag"],
             "setbreak": status["segment"]["set_break_flag"],
         }
-        self.song = {
+        self._song = {
             "title": status["segment"]["title_html"],
             "artist": status["segment"]["artist_html"],
             "album": status["segment"]["album_html"],
@@ -95,6 +104,46 @@ class WFMUClient(object):
         self.key = vals["__kfid"]
         print(self.key)
 
+    # playlist
+    def get_playlist(self, playlist_id: int) -> list:
+        """
+        Return a list of songs for playlist_id. It uses
+        PLAYLIST_URL_BASE instead of SONGS_XML_URL since we can get return
+        the playlist for both current & archive shows using PLAYLIST_URL_BASE.
+        """
+
+        r = requests.get(f"{PLAYLIST_URL_BASE}{playlist_id}")
+        soup = BeautifulSoup(r.text, "lxml-xml")
+        songs = soup.find("span", id="songs")
+        songs = [
+            row
+            for row in songs.find_all("tr")
+            if row.find("td", "song col_artist") is not None
+        ]
+        playlist = []
+        song = {}
+        for row in songs:
+            # print(row)
+            song["artist"] = row.find("td", "song col_artist").get_text().strip("\n")
+            song["title"] = (
+                row.find("td", "song col_song_title").font.get_text().strip("\n")
+            )
+            song["album"] = (
+                row.find("td", "song col_album_title").get_text().strip("\n")
+            )
+            song["record_label"] = (
+                row.find("td", "song col_record_label").get_text().strip("\n")
+            )
+            song["year"] = row.find("td", "song col_year").get_text().strip("\n")
+            # THIS IS JANK
+            # should write a helper function with some error handling
+            song["song_id"] = (
+                row.find("td", "song col_song_title")
+                .find_all("span", "KDBFavIcon KDBsong")[1]
+                .get("id")[8:]
+            )
+            print(song)
+
     # comments
     def comment(self, comment: str) -> None:
         r0 = self.session.get(self.show["playlist_link"])
@@ -127,27 +176,29 @@ class WFMUClient(object):
             "https://wfmu.org/playlistcommentpost.php", params={"p": 1}, data=body
         )
 
-    def get_comments(self) -> dict:
-        """
+    def get_comments(self) -> list:
         comments = []
         comment = {}
         r = self.session.get(COMMENTS_XML_URL)
         soup = BeautifulSoup(r.text, "lxml-xml")
         for c in soup.find_all("comment"):
-            comment["author"] = c.author
-            comment["content"] = c.content.plaintext.extract()
-            comment["parent"] = {
-                "type": c.parent.type,
-                "id": c.parent.id,
-                "content": c.parent,
-            }
+            # using `find` instead of dot (.) notation due to name
+            # collisions between bs4 properties and xml property names
+            comment["id"] = c.get("id")
+            comment["author"] = c.author.find("name").plaintext.get_text()
+            comment["content"] = c.content.plaintext.get_text()
+            if c.find("parent").get_text().strip("\n") == "":
+                comment["parent"] = None
+            else:
+                comment["parent"] = {
+                    "type": c.find("parent").find("type").get_text(),
+                    "id": c.find("parent").id.get_text(),
+                    "content": c.find("parent").plaintext.get_text(),
+                }
             comments.append(comment)
-            print(comment)
             comment = {}
 
         return comments
-        """
-        pass
 
     # favorites
     def favorite_current(self):
@@ -156,13 +207,13 @@ class WFMUClient(object):
         """
         self.favorite(self.show["playlist_id"], self.song["song_id"])
 
-    def favorite(self, playlist_id: str, song_id: str) -> None:
+    def favorite(self, playlist_id: int, song_id: str) -> None:
         self._favcon_toggle(playlist_id, song_id, state=0)
 
-    def unfavorite(self, playlist_id: str, song_id: str) -> None:
+    def unfavorite(self, playlist_id: int, song_id: str) -> None:
         self._favcon_toggle(playlist_id, song_id, state=1)
 
-    def _favcon_toggle(self, playlist_id: str, song_id: str, state) -> None:
+    def _favcon_toggle(self, playlist_id: int, song_id: str, state) -> None:
         url = "https://www.wfmu.org/favcon.php?action=fav_icon_toggle"
         body = {
             "type": "song",
@@ -180,6 +231,11 @@ class WFMUClient(object):
         # https://wfmu.org/auth.php?a=update_profile&panel_id=favorites
         pass
 
+    # schedule
+    def get_schedule_today(self) -> dict:
+        pass
+
+    # helpers
     def _extract_input_values(self, names: list, html: str) -> dict:
         """
         Extract values used for some strange form validation on wfmu.org.
