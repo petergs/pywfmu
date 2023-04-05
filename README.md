@@ -8,7 +8,6 @@ Get the current live show and song
 ```
 >>> from pywfmu import WFMUClient
 >>> woofmoo = WFMUClient()
->>> woofmoo.update_status() 
 >>> woofmoo.show
 {'name': "Daniel Blumin's show", 'playlist_id': '126345', 'playlist_link': 'https://www.wfmu.org/playlists/shows/126345'}
 >>> woofmoo.song
