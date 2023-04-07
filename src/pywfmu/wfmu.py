@@ -105,12 +105,14 @@ class WFMUClient(object):
         print(self.key)
 
     # playlist
-    def get_playlist(self, playlist_id: int) -> list:
+    def get_playlist(self, playlist_id: int = -1) -> list:
         """
         Return a list of songs for playlist_id. It uses
         PLAYLIST_URL_BASE instead of SONGS_XML_URL since we can get return
         the playlist for both current & archive shows using PLAYLIST_URL_BASE.
         """
+        if playlist_id == -1:
+            playlist_id = self.playlist_id
 
         r = requests.get(f"{PLAYLIST_URL_BASE}{playlist_id}")
         soup = BeautifulSoup(r.text, "lxml-xml")
@@ -118,12 +120,15 @@ class WFMUClient(object):
         songs = [
             row
             for row in songs.find_all("tr")
+            # exclude set_breaks and blank rows
             if row.find("td", "song col_artist") is not None
+            and row.get("class") != "set_break_row"
         ]
         playlist = []
         song = {}
         for row in songs:
             # print(row)
+
             song["artist"] = row.find("td", "song col_artist").get_text().strip("\n")
             song["title"] = (
                 row.find("td", "song col_song_title").font.get_text().strip("\n")
@@ -142,7 +147,10 @@ class WFMUClient(object):
                 .find_all("span", "KDBFavIcon KDBsong")[1]
                 .get("id")[8:]
             )
-            print(song)
+            # print(song)
+            playlist.append(song)
+            song = {}
+        return playlist
 
     # comments
     def comment(self, comment: str) -> None:
@@ -201,16 +209,16 @@ class WFMUClient(object):
         return comments
 
     # favorites
-    def favorite_current(self):
-        """
-        Shorthand for favorite(self.show.playlist_id, self.song.song_id)
-        """
-        self.favorite(self.show["playlist_id"], self.song["song_id"])
-
-    def favorite(self, playlist_id: int, song_id: str) -> None:
+    def favorite(self, playlist_id: int = -1, song_id: int = -1) -> None:
+        if playlist_id == -1:
+            playlist_id = self.playlist_id
+            song_id = self.song["song_id"]
         self._favcon_toggle(playlist_id, song_id, state=0)
 
-    def unfavorite(self, playlist_id: int, song_id: str) -> None:
+    def unfavorite(self, playlist_id: int = -1, song_id: int = -1) -> None:
+        if playlist_id == -1:
+            playlist_id = self.playlist_id
+            song_id = self.song["song_id"]
         self._favcon_toggle(playlist_id, song_id, state=1)
 
     def _favcon_toggle(self, playlist_id: int, song_id: str, state) -> None:
