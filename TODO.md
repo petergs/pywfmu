@@ -29,3 +29,6 @@
 - [ ] Insufficient error handling in get_playlist(). Write a helper function 
 that makes this safer or handles an parsing error more gracefully. In particular, 
 I'm worried about AttributeError(s).
+
+## Bugs
+- [ ] Ampersands (&) in song titles are getting dropped due to somethin in bs4
