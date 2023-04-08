@@ -20,6 +20,7 @@ COMMENTS_XML_URL = "https://wfmu.org/current_playlist_xml.php?m=comments&c=1"
 CURRENT_SHOW_XML_URL = "https://wfmu.org/currentliveshows.php?xml=1&c=1"
 SCHEDULE_TODAY_XML_URL = "https://wfmu.org/playingtoday.php?xml=1&c=1"
 SONGS_XML_URL = "https://wfmu.org/current_playlist_xml.php?m=songs"
+FAVORITES_URL = "https://wfmu.org/auth.php?a=update_profile&panel_id=favorites"
 
 
 @dataclass
@@ -42,7 +43,7 @@ class Song:
             "record_label": self.record_label,
             "song_id": self.song_id,
         }
-        return json.dumps(song, indent)
+        return json.dumps(song, indent=indent)
 
 
 @dataclass
@@ -71,7 +72,7 @@ class Show:
             "live": self.live,
             "setbreak": self.setbreak,
         }
-        return json.dumps(show, indent)
+        return json.dumps(show, indent=indent)
 
 
 class WFMUClient(object):
@@ -92,7 +93,7 @@ class WFMUClient(object):
         return self._song.title
 
     @property
-    def album(self) -> str:
+    def album(self) -> str | None:
         self._update_status()
         return self._song.album
 
@@ -136,7 +137,15 @@ class WFMUClient(object):
         year = status["segment"]["year_html"]
         record_label = status["segment"]["record_label_html"]
         song_id = status["segment"]["song_fav_id"]
-        self._song = Song(title, artist, album, year, record_label, song_id)
+        print(f"Record label {type(year)}")
+        self._song = Song(
+            title,
+            artist,
+            album if album != "" else None,
+            year if year != "" else None,
+            record_label if record_label != "" else None,
+            song_id,
+        )
 
     # session and login
     def login(self, username: str, password: str) -> None:
@@ -172,7 +181,7 @@ class WFMUClient(object):
             playlist_id = self.playlist_id
 
         r = requests.get(f"{PLAYLIST_URL_BASE}{playlist_id}")
-        soup = BeautifulSoup(r.text, "lxml-xml")
+        soup = BeautifulSoup(r.text, "lxml")
         songs = soup.find("span", id="songs")
         playlist: list[Song] = []
         if isinstance(songs, Tag):
@@ -184,7 +193,6 @@ class WFMUClient(object):
                 and row.get("class") != "set_break_row"
             ]
 
-            playlist = []
             for row in songs_tr:
                 title = row.find("td", "song col_song_title").font.text.strip("\n")
                 artist = row.find("td", "song col_artist").text.strip("\n")
@@ -198,7 +206,14 @@ class WFMUClient(object):
                     .find("span", id=re.compile("^KDBsong"))
                     .get("id")[8:]
                 )
-                s = Song(title, artist, album, year, record_label, song_id)
+                s = Song(
+                    title,
+                    artist,
+                    album if album != "" else None,
+                    year if year != "" else None,
+                    record_label if record_label != "" else None,
+                    song_id,
+                )
                 playlist.append(s)
         else:
             raise PlaylistParseError
@@ -287,14 +302,35 @@ class WFMUClient(object):
         r = self.session.post(url, data=body)
         pass
 
-    def get_favorites(self) -> None:
-        # https://wfmu.org/auth.php?a=update_profile&panel_id=favorites
-        pass
+    def get_favorites(self) -> list[Song]:
+        FAVORITES_TABLE_NAME = "scrollTableTwo"
+        r = self.session.get(FAVORITES_URL)
+
+        soup = BeautifulSoup(r.text, "lxml")
+        table = soup.find("table", FAVORITES_TABLE_NAME)
+        if not isinstance(table, Tag):
+            raise FavoritesParseError
+        trs = table.find_all("tr")
+
+        favorites: list[Song] = []
+        for tr in trs:
+            try:
+                song_id = tr.find(id=re.compile("^KDBsong")).get("id")[8:]
+                artist = tr.find("td", "td2").text
+                title = tr.find("td", "td3").text
+                album = tr.find("td", "td4").text
+                favorites.append(Song(title, artist, album, None, None, song_id))
+            except (AttributeError, KeyError):
+                raise FavoritesParseError
+
+        return favorites
 
     # schedule
     def get_schedule_today(self) -> None:
         pass
 
+
+# def find_or_raise(tag: Tag, )
 
 # helpers
 def _extract_input_values(names: list[str], html: str) -> dict:
@@ -330,6 +366,14 @@ class CommentParseError(Exception):
     """
     An exception for when PLAYLIST_URL_BASE returns an unexpected format
     for <span id="songs></span> or if such an element doesn't exist on the page
+    """
+
+    pass
+
+
+class FavoritesParseError(Exception):
+    """
+    An exception for when FAVORITES_URL returns an unexpected format
     """
 
     pass
